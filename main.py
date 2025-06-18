@@ -155,7 +155,7 @@ class EnhancedNewsProcessor:
             logger.warning(f"Unrecognized date_filter '{date_filter}', defaulting to '24h' (qdr:d).")
             tbs_value = "qdr:d"
 
-        search_call_params = {'query': query, 'limit': 7} # Fetch more to filter by credibility later
+        search_call_params = {'query': query} # Fetch more to filter by credibility later
         if tbs_value:
             search_call_params['tbs'] = tbs_value
 
@@ -361,7 +361,7 @@ class EnhancedNewsProcessor:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=400, # Adjusted for potentially structured JSON output
+                max_completion_tokens=400, # Adjusted for potentially structured JSON output
                 temperature=0.2, # Slightly higher for analytical tasks but still conservative
                 response_format={"type": "json_object"} # Request JSON output
             )
