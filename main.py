@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 import logging
+import asyncio
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -135,100 +136,130 @@ class EnhancedNewsProcessor:
             logger.error("Firecrawl API key not configured. Search will be skipped.")
             return [], query, "Search service not configured (Firecrawl API key missing)"
 
-        search_method = "Firecrawl Search"
+        search_method = "Firecrawl Search (2-step)"
 
-        # Convert date_filter to Firecrawl's tbs parameter
-        tbs_value = None # Default to no tbs if 'none' or unmapped
-        default_to_24h = False
-
-        if date_filter == "1h":
-            tbs_value = "qdr:h"
+        tbs_value = None
+        if date_filter == "1h": tbs_value = "qdr:h"
         elif date_filter == "6h":
-            tbs_value = "qdr:h"  # Map 6h to past hour
-            logger.info(f"Date filter '6h' mapped to Firecrawl 'qdr:h' (past hour).")
+            tbs_value = "qdr:h"
+            logger.info("Date filter '6h' mapped to Firecrawl 'qdr:h' (past hour).")
         elif date_filter == "12h":
-            tbs_value = "qdr:d"  # Map 12h to past day (closer than past hour)
-            logger.info(f"Date filter '12h' mapped to Firecrawl 'qdr:d' (past day).")
-        elif date_filter == "24h": # This is also the Pydantic default
             tbs_value = "qdr:d"
-        elif date_filter == "week":
-            tbs_value = "qdr:w"
-        elif date_filter == "month":
-            tbs_value = "qdr:m"
-        elif date_filter == "year":
-            tbs_value = "qdr:y"
-        elif date_filter == "none":
-            tbs_value = None # Explicitly no time filter
-            logger.info("Date filter 'none' selected, no time-based search filter will be applied.")
-        else: # Unrecognized or None (if Pydantic default isn't hit, though it should)
+            logger.info("Date filter '12h' mapped to Firecrawl 'qdr:d' (past day).")
+        elif date_filter == "24h": tbs_value = "qdr:d"
+        elif date_filter == "week": tbs_value = "qdr:w"
+        elif date_filter == "month": tbs_value = "qdr:m"
+        elif date_filter == "year": tbs_value = "qdr:y"
+        elif date_filter == "none": tbs_value = None
+        else:
             logger.warning(f"Unrecognized date_filter '{date_filter}', defaulting to '24h' (qdr:d).")
-            tbs_value = "qdr:d" # Default to 24h for unrecognized values
+            tbs_value = "qdr:d"
 
-        search_params = {
-            'query': query,
-            'scrape_options': {'formats': ['markdown']}, # Request Markdown content
-            'limit': 7 # Fetch a bit more to filter down by credibility
-        }
+        search_call_params = {'query': query, 'limit': 7} # Fetch more to filter by credibility later
         if tbs_value:
-            search_params['tbs'] = tbs_value
+            search_call_params['tbs'] = tbs_value
 
         effective_query_info = f"{query} (tbs: {tbs_value if tbs_value else 'None'})"
-        logger.info(f"Performing Firecrawl search with params: {search_params}")
+        logger.info(f"Performing Firecrawl search (step 1 - get URLs) with params: {search_call_params}")
 
         try:
-            # Firecrawl's search is synchronous in its current Python SDK.
-            # In a real async FastAPI app, this synchronous call should be wrapped:
-            # fc_search_results = await asyncio.to_thread(self.firecrawl_app.search, **search_params)
-            # For this subtask, we'll show the direct call for clarity of SDK usage.
-            fc_search_results = self.firecrawl_app.search(**search_params)
+            # Step 1: Perform search to get URLs
+            search_response_obj = await asyncio.to_thread(self.firecrawl_app.search, **search_call_params)
 
-            results_data = []
-            if isinstance(fc_search_results, dict) and 'data' in fc_search_results:
-                results_data = fc_search_results['data']
-            elif isinstance(fc_search_results, list): # If it directly returns a list
-                results_data = fc_search_results
+            # Determine how to access results list from search_response_obj
+            # Common patterns: response_obj.data, response_obj['data'], or response_obj directly if it's a list
+            initial_results = []
+            if isinstance(search_response_obj, dict) and 'data' in search_response_obj:
+                initial_results = search_response_obj['data']
+            elif isinstance(search_response_obj, list):
+                initial_results = search_response_obj
+            elif hasattr(search_response_obj, 'data') and isinstance(search_response_obj.data, list):
+                initial_results = search_response_obj.data
             else:
-                if hasattr(fc_search_results, 'data'):
-                    results_data = fc_search_results.data
-                else:
-                    logger.error(f"Unexpected Firecrawl search result format: {type(fc_search_results)}. Content: {str(fc_search_results)[:500]}")
-                    return [], effective_query_info, f"Search failed: Unexpected result format"
+                logger.error(f"Unexpected Firecrawl search() response format: {type(search_response_obj)}. Content: {str(search_response_obj)[:500]}")
+                return [], effective_query_info, "Search failed: Unexpected initial result format"
+
+            if not initial_results:
+                logger.info(f"Firecrawl search for '{effective_query_info}' returned no initial results.")
+                return [], query, search_method
 
             processed_results = []
-            for res in results_data:
-                url = res.get("url")
-                if not url: continue
+            # Limit scraping to top N (e.g., 5 or 7) to manage API calls and time
+            # The credibility filtering will happen after this.
+            # Let's process up to the search_call_params['limit'] initially.
+            urls_to_scrape = [res.get("url") for res in initial_results if res.get("url")]
 
-                domain = urlparse(url).netloc.lower().replace("www.", "")
-                if domain in BLOCKED_DOMAINS:
-                    logger.info(f"Skipping blocked domain from Firecrawl results: {domain}")
+            # Step 2: Scrape content for each URL
+            for i, res_stub in enumerate(initial_results): # Use initial_results to preserve original metadata
+                url_to_scrape = res_stub.get("url")
+                if not url_to_scrape:
+                    logger.warning(f"Skipping result with no URL at index {i}.")
                     continue
 
-                credibility = self.calculate_credibility_score(url)
-                if credibility < 6.0: # Minimum credibility threshold
-                    logger.info(f"Skipping low credibility domain: {domain} (Score: {credibility})")
+                # Stop if we have enough for final_results, considering potential filtering
+                if len(processed_results) >= 5 + 2 : # aim for a bit more than 5 to allow for credibility filtering
+                     logger.info(f"Reached scrape limit for results for query '{query}'.")
+                     break
+
+
+                logger.info(f"Scraping URL (step 2) for Firecrawl: {url_to_scrape}")
+                markdown_content = ""
+                scrape_error = None
+                try:
+                    # Based on API reference for /scrape, 'formats' is a top-level param in JSON body.
+                    # So, for Python SDK, it should be a keyword argument to scrape_url.
+                    scrape_data = await asyncio.to_thread(
+                        self.firecrawl_app.scrape_url,
+                        url_to_scrape,
+                        formats=['markdown'], # Pass formats as a kwarg
+                        onlyMainContent=True # Good default to try
+                    )
+                    # scrape_data structure: usually a dict with 'markdown', 'metadata', etc.
+                    if scrape_data and isinstance(scrape_data, dict) and scrape_data.get('markdown'):
+                        markdown_content = scrape_data['markdown']
+                    elif scrape_data and isinstance(scrape_data, dict) and scrape_data.get('data', {}).get('markdown'): # some SDKs might nest it
+                        markdown_content = scrape_data['data']['markdown']
+                    else:
+                        logger.warning(f"Markdown content not found or in unexpected format for {url_to_scrape}. Data: {str(scrape_data)[:200]}")
+                        scrape_error = "Markdown content not found"
+
+                except Exception as scrape_e:
+                    logger.error(f"Firecrawl scrape_url failed for {url_to_scrape}: {scrape_e}", exc_info=True)
+                    scrape_error = str(scrape_e)
+
+                # Basic result structure from initial search
+                current_res_dict = {
+                    "title": res_stub.get("title", "No title provided"),
+                    "url": url_to_scrape,
+                    "description": res_stub.get("description") or (markdown_content[:250] + "..." if markdown_content else "No description available."),
+                    "published_at": res_stub.get("metadata", {}).get("publishedDate") or res_stub.get("publishedDate"), # from initial search result
+                    "credibility_score": 0.0, # Will be calculated next
+                    "source_domain": urlparse(url_to_scrape).netloc.lower().replace("www.", ""),
+                    "raw_content": markdown_content if not scrape_error else f"Scrape failed: {scrape_error}"
+                }
+
+                # Calculate credibility (even if scrape failed, we have the domain)
+                current_res_dict["credibility_score"] = self.calculate_credibility_score(url_to_scrape)
+
+                if current_res_dict["credibility_score"] < 6.0:
+                    logger.info(f"Skipping low credibility domain after scrape: {current_res_dict['source_domain']} (Score: {current_res_dict['credibility_score']})")
+                    continue # Skip if low credibility
+
+                if scrape_error and not markdown_content: # If scrape failed and no content, skip
+                    logger.info(f"Skipping result for {url_to_scrape} due to scrape error and no content.")
                     continue
 
-                markdown_content = res.get("markdown", "")
-
-                processed_results.append({
-                    "title": res.get("title", "No title provided"),
-                    "url": url,
-                    "description": res.get("description") or (markdown_content[:250] + "..." if markdown_content else "No description available."),
-                    "published_at": res.get("metadata", {}).get("publishedDate") or res.get("publishedDate"),
-                    "credibility_score": credibility,
-                    "source_domain": domain,
-                    "raw_content": markdown_content
-                })
+                processed_results.append(current_res_dict)
 
             processed_results.sort(key=lambda x: x["credibility_score"], reverse=True)
-            final_results = processed_results[:5]
-            logger.info(f"Found {len(final_results)} high-quality sources via Firecrawl for query: '{effective_query_info}'")
+            final_results = processed_results[:5] # Take top 5 after all processing
+
+            logger.info(f"Found {len(final_results)} high-quality sources via Firecrawl (2-step) for query: '{effective_query_info}'")
             return final_results, query, search_method
             
         except Exception as e:
-            logger.error(f"Firecrawl search failed for query '{query}': {e}", exc_info=True)
-            return [], query, f"Search failed: {str(e)}"
+            logger.error(f"Firecrawl search_news (outer try) failed for query '{query}': {e}", exc_info=True)
+            return [], query, f"Search process failed: {str(e)}"
 
     async def extract_content(self, search_results: List[Dict[str, Any]]) -> tuple[str, str]:
         if not search_results:
