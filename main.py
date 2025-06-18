@@ -247,14 +247,9 @@ class EnhancedNewsProcessor:
                     continue
 
                 header = (f"**Source: {result.get('source_domain', 'Unknown')} "
-                          f"(Credibility: {result.get('credibility_score', 0):.1f}/10)**
-"
-                          f"URL: {result.get('url')}
-
-"
-                          f"Title: {result.get('title', 'N/A')}
-
-")
+                          f"(Credibility: {result.get('credibility_score', 0):.1f}/10)\n"
+                          f"URL: {result.get('url')}\n\n"
+                          f"Title: {result.get('title', 'N/A')}\n\n")
                 content_parts.append(header + article_content)
 
                 if result.get('source_domain'):
