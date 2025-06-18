@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from urllib.parse import urlparse
-from firecrawl import FirecrawlApp, ScrapeOptions
+from firecrawl import FirecrawlApp
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -166,7 +166,7 @@ class EnhancedNewsProcessor:
 
         search_params = {
             'query': query,
-            'scrape_options': ScrapeOptions(formats=["markdown"]), # Request Markdown content
+            'scrape_options': {'formats': ['markdown']}, # Request Markdown content
             'limit': 7 # Fetch a bit more to filter down by credibility
         }
         if tbs_value:
