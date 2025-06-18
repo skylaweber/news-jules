@@ -4,10 +4,10 @@ AI-powered news processing pipeline that converts URLs or topics into profession
 
 ## Features
 
-- **Multi-model AI pipeline**: GPT-4.1 (extraction + SEO) → o3-mini (verification) → Claude Sonnet 4 (writing)
+- **Multi-model AI pipeline**: GPT-4.1 (extraction + SEO) → o3-2025-04-16 (verification) → claude-sonnet-4-20250514 (writing)
 - **Smart caching**: Redis-based caching with 24-hour TTL
 - **Webhook support**: Async processing with callback notifications
-- **Flexible input**: Process URLs (via Firecrawl) or topics (via Brave Search)
+- **Flexible input**: Process URLs (Direct Fetch) or topics (via Firecrawl Search)
 
 ## Quick Start
 
@@ -65,10 +65,9 @@ POST /webhook/news-processor
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OPENAI_API_KEY` | Yes | OpenAI API key for GPT-4.1 and o3-mini |
-| `ANTHROPIC_API_KEY` | Yes | Anthropic API key for Claude Sonnet 4 |
-| `FIRECRAWL_API_KEY` | Yes | Firecrawl API key for URL scraping |
-| `BRAVE_API_KEY` | Yes | Brave Search API key for topic search |
+| `OPENAI_API_KEY` | Yes | OpenAI API key for GPT-4.1 (extraction, SEO) and o3-2025-04-16 (verification) |
+| `ANTHROPIC_API_KEY` | Yes | Anthropic API key for claude-sonnet-4-20250514 (writing) |
+| `FIRECRAWL_API_KEY` | Yes | Firecrawl API key for web search and content scraping |
 | `REDIS_URL` | No | Redis connection URL (defaults to localhost) |
 | `CACHE_TTL_HOURS` | No | Cache time-to-live in hours (default: 24) |
 
@@ -91,7 +90,7 @@ Also supported - adjust build commands to use `python3` and `pip3`.
   "success": true,
   "article": "Generated news article...",
   "seo": "SEO metadata...",
-  "models_used": "GPT-4.1 (facts + SEO), o3-mini (verification), Claude Sonnet 4 (writing)",
+  "models_used": "GPT-4.1 (facts + SEO), o3-2025-04-16 (verification), claude-sonnet-4-20250514 (writing)",
   "processing_time": 12.34,
   "input_type": "URL",
   "cached": false,
@@ -105,13 +104,13 @@ Also supported - adjust build commands to use `python3` and `pip3`.
 ```
 Input (URL/Topic) 
     ↓
-Route & Extract Content (Firecrawl/Brave)
+Route & Extract Content (Firecrawl Search / Direct URL Fetch)
     ↓
 Extract Facts (GPT-4.1)
     ↓
-Verify & Organize (o3-mini)
+Verify & Organize (o3-2025-04-16)
     ↓
-Write Article (Claude Sonnet 4)
+Write Article (claude-sonnet-4-20250514)
     ↓
 Generate SEO (GPT-4.1)
     ↓

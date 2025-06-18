@@ -4,3 +4,4 @@ openai==1.6.1
 anthropic==0.39.0
 httpx==0.26.0
 pydantic==2.5.2
+firecrawl-py==0.0.18
